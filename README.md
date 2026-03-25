@@ -5,7 +5,7 @@
 
 ---
 
-When Claude puts its answer in a markdown table, selecting and copying from the terminal is painful. This [pi](https://github.com/badlogic/pi-mono) extension gives you `/copy` and `Ctrl+Shift+C` to grab it cleanly.
+When the model puts its answer in a markdown table, selecting and copying from the terminal is painful. This [pi](https://github.com/badlogic/pi-mono) extension gives you `/copy` and a configurable keyboard shortcut to grab it cleanly.
 
 ## Install
 
@@ -19,22 +19,25 @@ pi install git:github.com/jal-co/pi-copy-output
 pi -e npm:pi-copy-output
 ```
 
+> Requires [`@juanibiapina/pi-extension-settings`](https://www.npmjs.com/package/@juanibiapina/pi-extension-settings) for configurable keybindings. Install it first and make sure it appears **before** `pi-copy-output` in your `packages` array.
+
 ## Usage
 
 | Command | Description |
 |---------|-------------|
 | `/copy` | Smart picker -- lists all copyable blocks from the last response |
 | `/copy all` | Copy the full conversation |
-| `Ctrl+Shift+C` | Same as `/copy` |
+| `Ctrl+Shift+C` | Same as `/copy` (default, configurable via `/extension-settings`) |
 
 ### How it works
 
 `/copy` opens a picker listing:
 - **Full response** -- the raw markdown
+- **Sections** -- if the response has `---` horizontal rules, each section is listed separately
 - **Code blocks** -- each fenced block, without the fences
 - **Tables** -- opens a grid dialog (see below)
 
-If the response is plain text with no tables or code, it copies immediately.
+If the response is plain text with no tables, code, or sections, it copies immediately.
 
 ### Table grid
 
@@ -50,9 +53,22 @@ When you select a table from the picker, a grid dialog opens showing the actual 
 
 Cell values are cleaned -- no pipes, no padding, no markdown formatting (bold, links, inline code stripped).
 
+## Settings
+
+Requires [`@juanibiapina/pi-extension-settings`](https://www.npmjs.com/package/@juanibiapina/pi-extension-settings). Use `/extension-settings` in pi to configure:
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Keyboard Shortcut | Key combo to open the copy picker | `ctrl+shift+c` |
+
+Available shortcut options: `ctrl+shift+c`, `ctrl+shift+y`, `ctrl+shift+x`, `alt+c`, `alt+shift+c`, `ctrl+alt+c`.
+
+After changing the shortcut, run `/reload` for it to take effect.
+
 ## Requirements
 
 - [pi](https://github.com/badlogic/pi-mono)
+- [`@juanibiapina/pi-extension-settings`](https://www.npmjs.com/package/@juanibiapina/pi-extension-settings) (for configurable keybindings)
 - A clipboard utility (`pbcopy` on macOS, `xclip` on Linux, `clip` on Windows)
 
 ## License

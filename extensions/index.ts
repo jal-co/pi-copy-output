@@ -22,8 +22,11 @@ import {
 	Key,
 	truncateToWidth,
 	visibleWidth,
+	type KeyId,
 } from "@mariozechner/pi-tui";
 import type { Theme } from "@mariozechner/pi-coding-agent";
+import type { SettingDefinition } from "@juanibiapina/pi-extension-settings";
+import { getSetting } from "@juanibiapina/pi-extension-settings";
 import { exec as cpExec } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -192,9 +195,9 @@ async function openTableGrid(
 			});
 
 			const pad = (content: string, width: number) =>
-				theme.fg("border", "|") +
-				truncateToWidth(content, width - 2, "...", true) +
-				theme.fg("border", "|");
+				theme.fg("border", "│") +
+				truncateToWidth(content, width - 2, "…", true) +
+				theme.fg("border", "│");
 
 			const maxVisibleRows = 14;
 
@@ -209,9 +212,9 @@ async function openTableGrid(
 					const lp = Math.floor((innerW - tw) / 2);
 					const rp = Math.max(0, innerW - tw - lp);
 					lines.push(
-						theme.fg("border", "+" + "-".repeat(lp)) +
+						theme.fg("border", "╭" + "─".repeat(lp)) +
 						theme.fg("accent", theme.bold(title)) +
-						theme.fg("border", "-".repeat(rp) + "+"),
+						theme.fg("border", "─".repeat(rp) + "╮"),
 					);
 
 					// Header row
@@ -222,10 +225,10 @@ async function openTableGrid(
 						if (highlighted) return theme.bg("selectedBg", theme.fg("accent", padded));
 						return theme.fg("text", theme.bold(padded));
 					});
-					lines.push(pad(` ${headerCells.join(theme.fg("border", " | "))} `, width));
+					lines.push(pad(` ${headerCells.join(theme.fg("border", " │ "))} `, width));
 
 					// Separator
-					const sep = colWidths.map((w) => "-".repeat(w)).join("-+-");
+					const sep = colWidths.map((w) => "─".repeat(w)).join("─┼─");
 					lines.push(pad(` ${theme.fg("border", sep)} `, width));
 
 					// Data rows (scrolled)
@@ -241,7 +244,7 @@ async function openTableGrid(
 							if (highlighted) return theme.bg("selectedBg", theme.fg("accent", padded));
 							return theme.fg("text", padded);
 						});
-						lines.push(pad(` ${cells.join(theme.fg("border", " | "))} `, width));
+						lines.push(pad(` ${cells.join(theme.fg("border", " │ "))} `, width));
 					}
 
 					if (table.rows.length > maxVisibleRows) {
@@ -252,10 +255,10 @@ async function openTableGrid(
 					}
 
 					// Actions
-					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
+					lines.push(theme.fg("border", "├" + "─".repeat(innerW) + "┤"));
 
 					const cell = getCellText();
-					const preview = cell.length > 50 ? cell.slice(0, 50) + "..." : cell;
+					const preview = cell.length > 50 ? cell.slice(0, 50) + "…" : cell;
 					lines.push(pad(` ${theme.fg("muted", "Cell:")} ${theme.fg("text", preview)} `, width));
 
 					lines.push(pad("", width));
@@ -265,9 +268,9 @@ async function openTableGrid(
 						`${theme.fg("accent", "c")} copy column`,
 						`${theme.fg("accent", "a")} copy all`,
 						`${theme.fg("accent", "esc")} back`,
-					].join(theme.fg("dim", "  |  "));
+					].join(theme.fg("dim", "  ·  "));
 					lines.push(pad(` ${actions} `, width));
-					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
+					lines.push(theme.fg("border", "╰" + "─".repeat(innerW) + "╯"));
 
 					return lines;
 				},
@@ -411,7 +414,7 @@ async function showPicker(
 			selectList.onCancel = () => done(null);
 
 			const pad = (content: string, width: number) =>
-				theme.fg("border", "|") + truncateToWidth(content, width - 2, "...", true) + theme.fg("border", "|");
+				theme.fg("border", "│") + truncateToWidth(content, width - 2, "…", true) + theme.fg("border", "│");
 
 			return {
 				render(width: number): string[] {
@@ -423,19 +426,19 @@ async function showPicker(
 					const lp = Math.floor((innerW - tw) / 2);
 					const rp = Math.max(0, innerW - tw - lp);
 					lines.push(
-						theme.fg("border", "+" + "-".repeat(lp)) +
+						theme.fg("border", "╭" + "─".repeat(lp)) +
 						theme.fg("accent", theme.bold(title)) +
-						theme.fg("border", "-".repeat(rp) + "+"),
+						theme.fg("border", "─".repeat(rp) + "╮"),
 					);
 
 					for (const ll of selectList.render(innerW)) lines.push(pad(ll, width));
 
-					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
+					lines.push(theme.fg("border", "├" + "─".repeat(innerW) + "┤"));
 					lines.push(pad(
-						` ${theme.fg("dim", "up/down navigate  enter select  esc cancel")}`,
+						` ${theme.fg("dim", "up/down navigate · enter select · esc cancel")}`,
 						width,
 					));
-					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
+					lines.push(theme.fg("border", "╰" + "─".repeat(innerW) + "╯"));
 
 					return lines;
 				},
@@ -493,7 +496,37 @@ async function copyAll(ctx: ExtensionCommandContext): Promise<void> {
 
 // ── Main Extension ───────────────────────────────────────────────────────────
 
+const SETTINGS_NAME = "pi-copy-output";
+
+const DEFAULT_SHORTCUT = "ctrl+shift+c";
+
+const SHORTCUT_OPTIONS = [
+	"ctrl+shift+c",
+	"ctrl+shift+y",
+	"ctrl+shift+x",
+	"alt+c",
+	"alt+shift+c",
+	"ctrl+alt+c",
+];
+
 export default function copyOutputExtension(pi: ExtensionAPI) {
+	// Register settings
+	pi.events.emit("pi-extension-settings:register", {
+		name: SETTINGS_NAME,
+		settings: [
+			{
+				id: "shortcut",
+				label: "Keyboard Shortcut",
+				description: "Key combo to open the copy picker (requires /reload to take effect)",
+				defaultValue: DEFAULT_SHORTCUT,
+				values: SHORTCUT_OPTIONS,
+			},
+		] satisfies SettingDefinition[],
+	});
+
+	// Read configured shortcut
+	const shortcut = (getSetting(SETTINGS_NAME, "shortcut", DEFAULT_SHORTCUT) ?? DEFAULT_SHORTCUT) as KeyId;
+
 	pi.registerCommand("copy", {
 		description: "Copy assistant output to clipboard",
 		getArgumentCompletions: (prefix) => {
@@ -511,7 +544,7 @@ export default function copyOutputExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerShortcut("ctrl+shift+c", {
+	pi.registerShortcut(shortcut, {
 		description: "Copy assistant output to clipboard",
 		handler: async (ctx) => {
 			if (!ctx.hasUI) return;

@@ -1,6 +1,6 @@
 {
   "name": "pi-copy-output",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Copy the last assistant response to clipboard — tables, code, markdown, all of it",
   "keywords": [
     "pi-package"
@@ -16,6 +16,9 @@
     "README.md",
     "LICENSE"
   ],
+  "dependencies": {
+    "@juanibiapina/pi-extension-settings": "^0.6.0"
+  },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-ai": "*",
