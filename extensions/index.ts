@@ -1,19 +1,25 @@
 /**
- * pi-copy-output — One picker, everything copyable
+ * pi-copy-output — Copy assistant output to clipboard
+ *
+ * /copy opens a picker with the last response's copyable content.
+ * Code blocks copy directly. Tables open a grid where you arrow
+ * through cells and press a key to copy cell, row, column, or all.
  *
  * Commands:
- *   /copy              - Smart picker: all copyable content from last response
+ *   /copy              - Smart picker
  *   /copy all          - Copy full conversation (no picker)
  *
  * Shortcut:
- *   ctrl+shift+c       - Same as /copy — opens the picker
+ *   ctrl+shift+c       - Same as /copy
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import {
 	type SelectItem,
 	SelectList,
+	type TUI,
 	matchesKey,
+	Key,
 	truncateToWidth,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
@@ -75,31 +81,20 @@ function getAllConversationText(entries: SessionEntry[]): string {
 	return sections.join("\n\n---\n\n");
 }
 
-// ── Copyable Item ────────────────────────────────────────────────────────────
-
-interface CopyableItem {
-	label: string;       // What the user sees in the picker
-	description: string; // Secondary line
-	content: string;     // What gets copied
-}
-
 // ── Parsers ──────────────────────────────────────────────────────────────────
 
-/** Strip markdown bold/italic/links for cleaner copy content */
 function stripMarkdownInline(text: string): string {
 	return text
-		.replace(/\*\*([^*]+)\*\*/g, "$1")      // **bold**
-		.replace(/\*([^*]+)\*/g, "$1")            // *italic*
-		.replace(/`([^`]+)`/g, "$1")              // `code`
-		.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"); // [text](url)
+		.replace(/\*\*([^*]+)\*\*/g, "$1")
+		.replace(/\*([^*]+)\*/g, "$1")
+		.replace(/`([^`]+)`/g, "$1")
+		.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
 }
 
-/** Parse a markdown pipe table row into trimmed cell values */
 function parseTableRow(line: string): string[] {
 	return line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
 }
 
-/** Check if a row is a separator (|---|---| etc) */
 function isSeparatorRow(line: string): boolean {
 	return parseTableRow(line).every((c) => /^:?-+:?$/.test(c));
 }
@@ -153,19 +148,218 @@ function extractCodeBlocks(text: string): { lang: string; code: string }[] {
 	return blocks;
 }
 
-// ── Build Flat List ──────────────────────────────────────────────────────────
+// ── Table Grid Dialog ────────────────────────────────────────────────────────
 
-function buildCopyableItems(text: string): CopyableItem[] {
-	const items: CopyableItem[] = [];
+async function openTableGrid(
+	table: ParsedTable,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
+	const result = await ctx.ui.custom<string | null>(
+		(tui, theme, _kb, done) => {
+			let cursorRow = 0;
+			let cursorCol = 0;
 
-	// 1. Full response — always first
+			const clean = (r: number, c: number): string => {
+				if (r === -1) return stripMarkdownInline(table.headers[c] ?? "");
+				return stripMarkdownInline(table.rows[r]?.[c] ?? "");
+			};
+
+			const getCellText = () => clean(cursorRow, cursorCol);
+
+			const getRowText = () => {
+				const src = cursorRow === -1 ? table.headers : (table.rows[cursorRow] ?? []);
+				return src.map((_, ci) => clean(cursorRow, ci)).join("\t");
+			};
+
+			const getColumnText = () => {
+				const vals = [stripMarkdownInline(table.headers[cursorCol] ?? "")];
+				for (let ri = 0; ri < table.rows.length; ri++) {
+					vals.push(clean(ri, cursorCol));
+				}
+				return vals.join("\n");
+			};
+
+			const getAllText = () => table.raw;
+
+			// Column widths
+			const colWidths = table.headers.map((h, ci) => {
+				let max = stripMarkdownInline(h).length;
+				for (const row of table.rows) {
+					const w = stripMarkdownInline(row[ci] ?? "").length;
+					if (w > max) max = w;
+				}
+				return Math.min(Math.max(max, 4), 40);
+			});
+
+			const pad = (content: string, width: number) =>
+				theme.fg("border", "|") +
+				truncateToWidth(content, width - 2, "...", true) +
+				theme.fg("border", "|");
+
+			const maxVisibleRows = 14;
+
+			return {
+				render(width: number): string[] {
+					const innerW = Math.max(1, width - 2);
+					const lines: string[] = [];
+
+					// Title
+					const title = ` Table (${table.rows.length} rows x ${table.headers.length} cols) `;
+					const tw = visibleWidth(title);
+					const lp = Math.floor((innerW - tw) / 2);
+					const rp = Math.max(0, innerW - tw - lp);
+					lines.push(
+						theme.fg("border", "+" + "-".repeat(lp)) +
+						theme.fg("accent", theme.bold(title)) +
+						theme.fg("border", "-".repeat(rp) + "+"),
+					);
+
+					// Header row
+					const headerCells = table.headers.map((h, ci) => {
+						const txt = stripMarkdownInline(h);
+						const padded = txt.slice(0, colWidths[ci]).padEnd(colWidths[ci]);
+						const highlighted = cursorRow === -1 && cursorCol === ci;
+						if (highlighted) return theme.bg("selectedBg", theme.fg("accent", padded));
+						return theme.fg("text", theme.bold(padded));
+					});
+					lines.push(pad(` ${headerCells.join(theme.fg("border", " | "))} `, width));
+
+					// Separator
+					const sep = colWidths.map((w) => "-".repeat(w)).join("-+-");
+					lines.push(pad(` ${theme.fg("border", sep)} `, width));
+
+					// Data rows (scrolled)
+					const startRow = Math.max(0, cursorRow - Math.floor(maxVisibleRows / 2));
+					const endRow = Math.min(table.rows.length, startRow + maxVisibleRows);
+
+					for (let ri = startRow; ri < endRow; ri++) {
+						const row = table.rows[ri] ?? [];
+						const cells = table.headers.map((_, ci) => {
+							const txt = stripMarkdownInline(row[ci] ?? "");
+							const padded = txt.slice(0, colWidths[ci]).padEnd(colWidths[ci]);
+							const highlighted = cursorRow === ri && cursorCol === ci;
+							if (highlighted) return theme.bg("selectedBg", theme.fg("accent", padded));
+							return theme.fg("text", padded);
+						});
+						lines.push(pad(` ${cells.join(theme.fg("border", " | "))} `, width));
+					}
+
+					if (table.rows.length > maxVisibleRows) {
+						lines.push(pad(
+							` ${theme.fg("dim", `(${startRow + 1}-${endRow} of ${table.rows.length})`)} `,
+							width,
+						));
+					}
+
+					// Actions
+					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
+
+					const cell = getCellText();
+					const preview = cell.length > 50 ? cell.slice(0, 50) + "..." : cell;
+					lines.push(pad(` ${theme.fg("muted", "Cell:")} ${theme.fg("text", preview)} `, width));
+
+					lines.push(pad("", width));
+					const actions = [
+						`${theme.fg("accent", "enter")} copy cell`,
+						`${theme.fg("accent", "r")} copy row`,
+						`${theme.fg("accent", "c")} copy column`,
+						`${theme.fg("accent", "a")} copy all`,
+						`${theme.fg("accent", "esc")} back`,
+					].join(theme.fg("dim", "  |  "));
+					lines.push(pad(` ${actions} `, width));
+					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
+
+					return lines;
+				},
+
+				invalidate() {},
+
+				handleInput(data: string) {
+					if (matchesKey(data, Key.escape)) { done(null); return; }
+
+					// Navigation
+					if (matchesKey(data, Key.up)) {
+						if (cursorRow > -1) { cursorRow--; tui.requestRender(); }
+						return;
+					}
+					if (matchesKey(data, Key.down)) {
+						if (cursorRow < table.rows.length - 1) { cursorRow++; tui.requestRender(); }
+						return;
+					}
+					if (matchesKey(data, Key.left)) {
+						if (cursorCol > 0) { cursorCol--; tui.requestRender(); }
+						return;
+					}
+					if (matchesKey(data, Key.right)) {
+						if (cursorCol < table.headers.length - 1) { cursorCol++; tui.requestRender(); }
+						return;
+					}
+
+					// Copy actions
+					if (matchesKey(data, Key.enter)) { done(getCellText()); return; }
+					if (matchesKey(data, "r")) { done(getRowText()); return; }
+					if (matchesKey(data, "c")) { done(getColumnText()); return; }
+					if (matchesKey(data, "a")) { done(getAllText()); return; }
+				},
+			};
+		},
+		{ overlay: true, overlayOptions: { anchor: "center", width: "85%", minWidth: 60, maxHeight: "85%" } },
+	);
+
+	if (result === null) return;
+
+	try {
+		await copyToClipboard(result);
+		const lines = result.split("\n").length;
+		ctx.ui.notify(`Copied (${lines} line${lines === 1 ? "" : "s"}, ${result.length} chars)`, "info");
+	} catch {
+		ctx.ui.notify("Failed to copy", "error");
+	}
+}
+
+// ── Top-Level Picker ─────────────────────────────────────────────────────────
+
+interface PickerItem {
+	label: string;
+	description: string;
+	action: "copy" | "table";
+	content: string;
+	tableIndex?: number;
+}
+
+/** Split text on markdown horizontal rules into sections */
+function splitSections(text: string): string[] {
+	// Split on ---, ***, ___ (with optional whitespace) that sit on their own line
+	const parts = text.split(/\n(?:---+|\*\*\*+|___+)\s*\n/);
+	return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+function buildPickerItems(text: string, tables: ParsedTable[]): PickerItem[] {
+	const items: PickerItem[] = [];
+
 	items.push({
 		label: "Full response",
 		description: `${text.split("\n").length} lines, ${text.length} chars`,
+		action: "copy",
 		content: text,
 	});
 
-	// 2. Code blocks
+	// Sections split on horizontal rules
+	const sections = splitSections(text);
+	if (sections.length > 1) {
+		for (let i = 0; i < sections.length; i++) {
+			const sec = sections[i];
+			const preview = sec.split("\n")[0]?.slice(0, 70) ?? "";
+			items.push({
+				label: `Section ${i + 1}`,
+				description: preview,
+				action: "copy",
+				content: sec,
+			});
+		}
+	}
+
+	// Code blocks
 	const codeBlocks = extractCodeBlocks(text);
 	for (let i = 0; i < codeBlocks.length; i++) {
 		const { lang, code } = codeBlocks[i];
@@ -173,77 +367,40 @@ function buildCopyableItems(text: string): CopyableItem[] {
 		items.push({
 			label: `Code block${codeBlocks.length > 1 ? ` ${i + 1}` : ""} [${lang}]`,
 			description: preview,
+			action: "copy",
 			content: code,
 		});
 	}
 
-	// 3. Tables — flatten into readable items
-	const tables = extractParsedTables(text);
+	// Tables
 	for (let ti = 0; ti < tables.length; ti++) {
-		const table = tables[ti];
-		const tablePrefix = tables.length > 1 ? `Table ${ti + 1}: ` : "";
-
-		// Full table as markdown
+		const t = tables[ti];
+		const prefix = tables.length > 1 ? `Table ${ti + 1}` : "Table";
 		items.push({
-			label: `${tablePrefix}Full table (markdown)`,
-			description: `${table.rows.length} rows × ${table.headers.length} cols`,
-			content: table.raw,
+			label: `${prefix} (${t.rows.length} rows x ${t.headers.length} cols)`,
+			description: t.headers.map((h) => stripMarkdownInline(h)).join(", ").slice(0, 70),
+			action: "table",
+			content: t.raw,
+			tableIndex: ti,
 		});
-
-		// Full table as flat list: "Header: value" per row
-		const flatRows = table.rows.map((row) =>
-			table.headers.map((h, ci) => `${stripMarkdownInline(h)}: ${stripMarkdownInline(row[ci] ?? "")}`).join("\n"),
-		);
-		items.push({
-			label: `${tablePrefix}Full table (flat list)`,
-			description: `Each row as "header: value"`,
-			content: flatRows.join("\n\n"),
-		});
-
-		// Each column as a list
-		for (let ci = 0; ci < table.headers.length; ci++) {
-			const header = stripMarkdownInline(table.headers[ci]);
-			const values = table.rows.map((row) => stripMarkdownInline(row[ci] ?? ""));
-			items.push({
-				label: `  ┗ Column: ${header}`,
-				description: values.slice(0, 3).join(", ") + (values.length > 3 ? "…" : ""),
-				content: values.join("\n"),
-			});
-		}
-
-		// Each row as flat "header: value" pairs
-		for (let ri = 0; ri < table.rows.length; ri++) {
-			const row = table.rows[ri];
-			const firstCell = stripMarkdownInline(row[0] ?? `Row ${ri + 1}`);
-			const flat = table.headers.map((h, ci) =>
-				`${stripMarkdownInline(h)}: ${stripMarkdownInline(row[ci] ?? "")}`,
-			).join("\n");
-			items.push({
-				label: `  ┗ Row: ${firstCell.slice(0, 50)}`,
-				description: flat.replace(/\n/g, " · ").slice(0, 80),
-				content: flat,
-			});
-		}
 	}
 
 	return items;
 }
 
-// ── Picker UI ────────────────────────────────────────────────────────────────
-
 async function showPicker(
-	items: CopyableItem[],
+	items: PickerItem[],
 	ctx: ExtensionCommandContext,
-): Promise<CopyableItem | null> {
+): Promise<PickerItem | null> {
 	const selectItems: SelectItem[] = items.map((item, i) => ({
 		value: String(i),
 		label: item.label,
 		description: item.description,
 	}));
 
-	return ctx.ui.custom<CopyableItem | null>(
+	return ctx.ui.custom<PickerItem | null>(
 		(tui, theme, _kb, done) => {
-			const selectList = new SelectList(selectItems, Math.min(selectItems.length, 16), {
+			const selectList = new SelectList(selectItems, Math.min(selectItems.length, 14), {
 				selectedPrefix: (t: string) => theme.fg("accent", t),
 				selectedText: (t: string) => theme.fg("accent", t),
 				description: (t: string) => theme.fg("muted", t),
@@ -254,7 +411,7 @@ async function showPicker(
 			selectList.onCancel = () => done(null);
 
 			const pad = (content: string, width: number) =>
-				theme.fg("border", "│") + truncateToWidth(content, width - 2, "…", true) + theme.fg("border", "│");
+				theme.fg("border", "|") + truncateToWidth(content, width - 2, "...", true) + theme.fg("border", "|");
 
 			return {
 				render(width: number): string[] {
@@ -262,23 +419,23 @@ async function showPicker(
 					const lines: string[] = [];
 
 					const title = " Copy ";
-					const titleW = visibleWidth(title);
-					const lp = Math.floor((innerW - titleW) / 2);
-					const rp = Math.max(0, innerW - titleW - lp);
+					const tw = visibleWidth(title);
+					const lp = Math.floor((innerW - tw) / 2);
+					const rp = Math.max(0, innerW - tw - lp);
 					lines.push(
-						theme.fg("border", "╭" + "─".repeat(lp)) +
+						theme.fg("border", "+" + "-".repeat(lp)) +
 						theme.fg("accent", theme.bold(title)) +
-						theme.fg("border", "─".repeat(rp) + "╮"),
+						theme.fg("border", "-".repeat(rp) + "+"),
 					);
 
 					for (const ll of selectList.render(innerW)) lines.push(pad(ll, width));
 
-					lines.push(theme.fg("border", "├" + "─".repeat(innerW) + "┤"));
+					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
 					lines.push(pad(
-						` ${theme.fg("dim", "↑↓ navigate • enter copy • esc cancel")}`,
+						` ${theme.fg("dim", "up/down navigate  enter select  esc cancel")}`,
 						width,
 					));
-					lines.push(theme.fg("border", "╰" + "─".repeat(innerW) + "╯"));
+					lines.push(theme.fg("border", "+" + "-".repeat(innerW) + "+"));
 
 					return lines;
 				},
@@ -286,7 +443,7 @@ async function showPicker(
 				handleInput(data: string) { selectList.handleInput(data); tui.requestRender(); },
 			};
 		},
-		{ overlay: true, overlayOptions: { anchor: "center", width: "70%", minWidth: 50, maxHeight: "80%" } },
+		{ overlay: true, overlayOptions: { anchor: "center", width: "65%", minWidth: 50, maxHeight: "80%" } },
 	);
 }
 
@@ -296,25 +453,33 @@ async function openPicker(ctx: ExtensionCommandContext): Promise<void> {
 	const text = getLastAssistantText(ctx.sessionManager.getBranch());
 	if (!text) { ctx.ui.notify("No assistant response to copy", "warning"); return; }
 
-	const items = buildCopyableItems(text);
+	const tables = extractParsedTables(text);
+	const items = buildPickerItems(text, tables);
 
-	// If the response is just plain text (no tables, no code), skip the picker
+	// Plain text with no structure — just copy it
 	if (items.length === 1) {
 		try {
 			await copyToClipboard(text);
-			ctx.ui.notify(`✓ Copied (${text.split("\n").length} lines)`, "info");
-		} catch { ctx.ui.notify("✗ Failed to copy", "error"); }
+			ctx.ui.notify(`Copied (${text.split("\n").length} lines)`, "info");
+		} catch { ctx.ui.notify("Failed to copy", "error"); }
 		return;
 	}
 
 	const selected = await showPicker(items, ctx);
 	if (!selected) return;
 
+	// Table — open grid dialog
+	if (selected.action === "table" && selected.tableIndex !== undefined) {
+		await openTableGrid(tables[selected.tableIndex], ctx);
+		return;
+	}
+
+	// Everything else — copy directly
 	try {
 		await copyToClipboard(selected.content);
 		const lines = selected.content.split("\n").length;
-		ctx.ui.notify(`✓ Copied (${lines} line${lines === 1 ? "" : "s"}, ${selected.content.length} chars)`, "info");
-	} catch { ctx.ui.notify("✗ Failed to copy", "error"); }
+		ctx.ui.notify(`Copied (${lines} line${lines === 1 ? "" : "s"}, ${selected.content.length} chars)`, "info");
+	} catch { ctx.ui.notify("Failed to copy", "error"); }
 }
 
 async function copyAll(ctx: ExtensionCommandContext): Promise<void> {
@@ -322,8 +487,8 @@ async function copyAll(ctx: ExtensionCommandContext): Promise<void> {
 	if (!text.trim()) { ctx.ui.notify("No conversation to copy", "warning"); return; }
 	try {
 		await copyToClipboard(text);
-		ctx.ui.notify(`✓ Copied full conversation (${text.split("\n").length} lines)`, "info");
-	} catch { ctx.ui.notify("✗ Failed to copy", "error"); }
+		ctx.ui.notify(`Copied full conversation (${text.split("\n").length} lines)`, "info");
+	} catch { ctx.ui.notify("Failed to copy", "error"); }
 }
 
 // ── Main Extension ───────────────────────────────────────────────────────────
@@ -341,7 +506,7 @@ export default function copyOutputExtension(pi: ExtensionAPI) {
 			switch (args.trim()) {
 				case "all": await copyAll(ctx); break;
 				case "": await openPicker(ctx); break;
-				default: ctx.ui.notify(`Unknown subcommand "${args.trim()}". Try: /copy or /copy all`, "warning");
+				default: ctx.ui.notify(`Unknown: "${args.trim()}". Try /copy or /copy all`, "warning");
 			}
 		},
 	});
