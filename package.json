@@ -3,7 +3,10 @@
   "version": "0.2.0",
   "description": "Copy the last assistant response to clipboard — tables, code, markdown, all of it",
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "clipboard",
+    "copy",
+    "tables"
   ],
   "author": "jal-co",
   "license": "MIT",
@@ -28,6 +31,7 @@
   "pi": {
     "extensions": [
       "./extensions"
-    ]
+    ],
+    "video": "https://raw.githubusercontent.com/jal-co/pi-copy-output/main/demo.mp4"
   }
 }

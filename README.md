@@ -1,25 +1,31 @@
 <p align="center">
-  <strong>pi-copy-output</strong><br>
-  <em>Copy assistant responses to your clipboard — tables, code blocks, individual cells.</em>
+  <strong>pi-copy-output</strong>
 </p>
 
----
-
-When the model puts its answer in a markdown table, selecting and copying from the terminal is painful. This [pi](https://github.com/badlogic/pi-mono) extension gives you `/copy` and a configurable keyboard shortcut to grab it cleanly.
+<p align="center">
+  A <a href="https://github.com/badlogic/pi-mono">pi</a> extension for copying assistant responses to your clipboard.<br>
+  Tables, code blocks, individual cells, sections — without fighting terminal selection.
+</p>
 
 ## Install
 
 ```bash
+# From npm
 pi install npm:pi-copy-output
-```
 
-Or from git:
-
-```bash
+# From git
 pi install git:github.com/jal-co/pi-copy-output
 ```
 
+Or try without installing:
+
+```bash
+pi -e npm:pi-copy-output
+```
+
 ## Usage
+
+All commands are accessed via `/copy`:
 
 | Command | Description |
 |---------|-------------|
@@ -65,7 +71,7 @@ The extension works fine without `pi-extension-settings` — you just get the de
 
 ## Requirements
 
-- [pi](https://github.com/badlogic/pi-mono)
+- [pi](https://github.com/badlogic/pi-mono) coding agent
 - A clipboard utility (`pbcopy` on macOS, `xclip` on Linux, `clip` on Windows)
 
 ## License
