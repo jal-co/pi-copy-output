@@ -1,0 +1,30 @@
+{
+  "name": "pi-copy-output",
+  "version": "0.1.0",
+  "description": "Copy the last assistant response to clipboard — tables, code, markdown, all of it",
+  "keywords": [
+    "pi-package"
+  ],
+  "author": "jal-co",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jal-co/pi-copy-output.git"
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}
