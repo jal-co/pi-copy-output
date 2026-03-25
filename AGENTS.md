@@ -1,16 +1,16 @@
 # pi-copy-output
 
-A pi extension that copies assistant responses to the system clipboard via `/copy` and `Ctrl+Shift+C`, with a cell-level table explorer for navigating markdown tables.
+A pi extension for copying assistant responses to the system clipboard. Provides `/copy` command, `Ctrl+Shift+C` shortcut, and an interactive table grid for cell-level copying.
 
-## Project Structure
+## Structure
 
 ```
 pi-copy-output/
 ├── extensions/
-│   └── index.ts          # The extension — /copy command, table explorer, Ctrl+Shift+C shortcut
+│   └── index.ts          # Single-file extension
 ├── .github/workflows/
-│   └── publish.yml       # Auto-publishes to npm on GitHub release
-├── package.json          # Pi package manifest (pi.extensions field)
+│   └── publish.yml       # npm publish on GitHub release
+├── package.json
 ├── README.md
 ├── LICENSE
 └── AGENTS.md
@@ -18,29 +18,27 @@ pi-copy-output/
 
 ## Development
 
-Single-file extension with no build step. Edit `extensions/index.ts` directly.
-
-Uses only pi peer dependencies — no runtime deps.
-
-To test locally:
+No build step. Edit `extensions/index.ts` directly. Test with:
 
 ```bash
 pi -e ./extensions/index.ts
 ```
 
-## Release Process
+## Release
 
 1. Bump version in `package.json`
-2. Commit: `git commit -am "chore: bump version to X.Y.Z"`
-3. Tag and release: `gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes`
-4. GitHub Action publishes to npm automatically.
+2. Commit and push
+3. `gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes`
 
-## Architecture Notes
+## Architecture
 
-- Reads `ctx.sessionManager.getBranch()` entries to find assistant messages.
-- Text extraction pulls `type: "text"` content blocks from assistant message arrays.
-- Table parser splits pipe-delimited rows into structured `ParsedTable` objects (headers + rows of string arrays).
-- Table explorer renders a navigable grid with cell/row/column/table copy modes.
-- Code block extraction uses regex for fenced blocks.
-- Clipboard uses `child_process.exec` with platform-specific commands (`pbcopy`, `xclip`, `clip`).
-- All overlays use `ctx.ui.custom()` with `overlay: true`.
+- Session entries from `ctx.sessionManager.getBranch()` provide assistant messages
+- Text extraction pulls `type: "text"` content blocks
+- Table parser splits pipe-delimited rows into `ParsedTable` (headers + rows of string arrays)
+- Table grid renders a navigable overlay with cell/row/column/table copy actions
+- Code block extraction uses regex for fenced blocks
+- Section splitting on `---`/`***`/`___` horizontal rules
+- Clipboard via `child_process.exec` with platform detection (`pbcopy`, `xclip`, `clip`)
+- Configurable shortcut via `@juanibiapina/pi-extension-settings` event bus
+- All overlays use `ctx.ui.custom()` with `overlay: true`
+- Shared border helpers (`borderTop`, `borderMid`, `borderBot`, `padLine`) for consistent UI

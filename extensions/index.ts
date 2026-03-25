@@ -10,14 +10,13 @@
  *   /copy all          - Copy full conversation (no picker)
  *
  * Shortcut:
- *   ctrl+shift+c       - Same as /copy
+ *   ctrl+shift+c       - Same as /copy (configurable via /extension-settings)
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import {
 	type SelectItem,
 	SelectList,
-	type TUI,
 	matchesKey,
 	Key,
 	truncateToWidth,
@@ -41,6 +40,16 @@ async function copyToClipboard(text: string): Promise<void> {
 	else if (platform === "win32") cmd = "clip";
 	else cmd = "xclip -selection clipboard";
 	await execAsync(cmd, { input: text });
+}
+
+async function doCopy(text: string, label: string, ctx: ExtensionCommandContext): Promise<void> {
+	try {
+		await copyToClipboard(text);
+		const lines = text.split("\n").length;
+		ctx.ui.notify(`Copied ${label} (${lines} line${lines === 1 ? "" : "s"}, ${text.length} chars)`, "info");
+	} catch {
+		ctx.ui.notify("Failed to copy — is pbcopy/xclip installed?", "error");
+	}
 }
 
 // ── Content Extraction ───────────────────────────────────────────────────────
@@ -151,6 +160,31 @@ function extractCodeBlocks(text: string): { lang: string; code: string }[] {
 	return blocks;
 }
 
+// ── Shared UI Helpers ────────────────────────────────────────────────────────
+
+function borderTop(title: string, innerW: number, theme: Theme): string {
+	const tw = visibleWidth(title);
+	const lp = Math.floor((innerW - tw) / 2);
+	const rp = Math.max(0, innerW - tw - lp);
+	return (
+		theme.fg("border", "╭" + "─".repeat(lp)) +
+		theme.fg("accent", theme.bold(title)) +
+		theme.fg("border", "─".repeat(rp) + "╮")
+	);
+}
+
+function borderMid(innerW: number, theme: Theme): string {
+	return theme.fg("border", "├" + "─".repeat(innerW) + "┤");
+}
+
+function borderBot(innerW: number, theme: Theme): string {
+	return theme.fg("border", "╰" + "─".repeat(innerW) + "╯");
+}
+
+function padLine(content: string, width: number, theme: Theme): string {
+	return theme.fg("border", "│") + truncateToWidth(content, width - 2, "…", true) + theme.fg("border", "│");
+}
+
 // ── Table Grid Dialog ────────────────────────────────────────────────────────
 
 async function openTableGrid(
@@ -184,7 +218,6 @@ async function openTableGrid(
 
 			const getAllText = () => table.raw;
 
-			// Column widths
 			const colWidths = table.headers.map((h, ci) => {
 				let max = stripMarkdownInline(h).length;
 				for (const row of table.rows) {
@@ -194,11 +227,7 @@ async function openTableGrid(
 				return Math.min(Math.max(max, 4), 40);
 			});
 
-			const pad = (content: string, width: number) =>
-				theme.fg("border", "│") +
-				truncateToWidth(content, width - 2, "…", true) +
-				theme.fg("border", "│");
-
+			const pad = (content: string, width: number) => padLine(content, width, theme);
 			const maxVisibleRows = 14;
 
 			return {
@@ -207,15 +236,13 @@ async function openTableGrid(
 					const lines: string[] = [];
 
 					// Title
-					const title = ` Table (${table.rows.length} rows x ${table.headers.length} cols) `;
-					const tw = visibleWidth(title);
-					const lp = Math.floor((innerW - tw) / 2);
-					const rp = Math.max(0, innerW - tw - lp);
-					lines.push(
-						theme.fg("border", "╭" + "─".repeat(lp)) +
-						theme.fg("accent", theme.bold(title)) +
-						theme.fg("border", "─".repeat(rp) + "╮"),
-					);
+					lines.push(borderTop(
+						` Table (${table.rows.length} rows x ${table.headers.length} cols) `,
+						innerW, theme,
+					));
+
+					// Breathing room
+					lines.push(pad("", width));
 
 					// Header row
 					const headerCells = table.headers.map((h, ci) => {
@@ -225,11 +252,11 @@ async function openTableGrid(
 						if (highlighted) return theme.bg("selectedBg", theme.fg("accent", padded));
 						return theme.fg("text", theme.bold(padded));
 					});
-					lines.push(pad(` ${headerCells.join(theme.fg("border", " │ "))} `, width));
+					lines.push(pad(`  ${headerCells.join(theme.fg("border", " │ "))}`, width));
 
-					// Separator
+					// Header separator
 					const sep = colWidths.map((w) => "─".repeat(w)).join("─┼─");
-					lines.push(pad(` ${theme.fg("border", sep)} `, width));
+					lines.push(pad(`  ${theme.fg("border", sep)}`, width));
 
 					// Data rows (scrolled)
 					const startRow = Math.max(0, cursorRow - Math.floor(maxVisibleRows / 2));
@@ -244,24 +271,23 @@ async function openTableGrid(
 							if (highlighted) return theme.bg("selectedBg", theme.fg("accent", padded));
 							return theme.fg("text", padded);
 						});
-						lines.push(pad(` ${cells.join(theme.fg("border", " │ "))} `, width));
+						lines.push(pad(`  ${cells.join(theme.fg("border", " │ "))}`, width));
 					}
 
 					if (table.rows.length > maxVisibleRows) {
 						lines.push(pad(
-							` ${theme.fg("dim", `(${startRow + 1}-${endRow} of ${table.rows.length})`)} `,
+							`  ${theme.fg("dim", `${startRow + 1}–${endRow} of ${table.rows.length}`)}`,
 							width,
 						));
 					}
 
-					// Actions
-					lines.push(theme.fg("border", "├" + "─".repeat(innerW) + "┤"));
+					// Footer
+					lines.push(borderMid(innerW, theme));
 
 					const cell = getCellText();
 					const preview = cell.length > 50 ? cell.slice(0, 50) + "…" : cell;
-					lines.push(pad(` ${theme.fg("muted", "Cell:")} ${theme.fg("text", preview)} `, width));
+					lines.push(pad(` ${theme.fg("muted", "Cell:")} ${theme.fg("text", preview)}`, width));
 
-					lines.push(pad("", width));
 					const actions = [
 						`${theme.fg("accent", "enter")} copy cell`,
 						`${theme.fg("accent", "r")} copy row`,
@@ -269,8 +295,9 @@ async function openTableGrid(
 						`${theme.fg("accent", "a")} copy all`,
 						`${theme.fg("accent", "esc")} back`,
 					].join(theme.fg("dim", "  ·  "));
-					lines.push(pad(` ${actions} `, width));
-					lines.push(theme.fg("border", "╰" + "─".repeat(innerW) + "╯"));
+					lines.push(pad(` ${actions}`, width));
+
+					lines.push(borderBot(innerW, theme));
 
 					return lines;
 				},
@@ -280,7 +307,6 @@ async function openTableGrid(
 				handleInput(data: string) {
 					if (matchesKey(data, Key.escape)) { done(null); return; }
 
-					// Navigation
 					if (matchesKey(data, Key.up)) {
 						if (cursorRow > -1) { cursorRow--; tui.requestRender(); }
 						return;
@@ -298,7 +324,6 @@ async function openTableGrid(
 						return;
 					}
 
-					// Copy actions
 					if (matchesKey(data, Key.enter)) { done(getCellText()); return; }
 					if (matchesKey(data, "r")) { done(getRowText()); return; }
 					if (matchesKey(data, "c")) { done(getColumnText()); return; }
@@ -309,14 +334,8 @@ async function openTableGrid(
 		{ overlay: true, overlayOptions: { anchor: "center", width: "85%", minWidth: 60, maxHeight: "85%" } },
 	);
 
-	if (result === null) return;
-
-	try {
-		await copyToClipboard(result);
-		const lines = result.split("\n").length;
-		ctx.ui.notify(`Copied (${lines} line${lines === 1 ? "" : "s"}, ${result.length} chars)`, "info");
-	} catch {
-		ctx.ui.notify("Failed to copy", "error");
+	if (result !== null) {
+		await doCopy(result, "table selection", ctx);
 	}
 }
 
@@ -332,7 +351,6 @@ interface PickerItem {
 
 /** Split text on markdown horizontal rules into sections */
 function splitSections(text: string): string[] {
-	// Split on ---, ***, ___ (with optional whitespace) that sit on their own line
 	const parts = text.split(/\n(?:---+|\*\*\*+|___+)\s*\n/);
 	return parts.map((p) => p.trim()).filter((p) => p.length > 0);
 }
@@ -347,7 +365,6 @@ function buildPickerItems(text: string, tables: ParsedTable[]): PickerItem[] {
 		content: text,
 	});
 
-	// Sections split on horizontal rules
 	const sections = splitSections(text);
 	if (sections.length > 1) {
 		for (let i = 0; i < sections.length; i++) {
@@ -362,7 +379,6 @@ function buildPickerItems(text: string, tables: ParsedTable[]): PickerItem[] {
 		}
 	}
 
-	// Code blocks
 	const codeBlocks = extractCodeBlocks(text);
 	for (let i = 0; i < codeBlocks.length; i++) {
 		const { lang, code } = codeBlocks[i];
@@ -375,7 +391,6 @@ function buildPickerItems(text: string, tables: ParsedTable[]): PickerItem[] {
 		});
 	}
 
-	// Tables
 	for (let ti = 0; ti < tables.length; ti++) {
 		const t = tables[ti];
 		const prefix = tables.length > 1 ? `Table ${ti + 1}` : "Table";
@@ -413,32 +428,23 @@ async function showPicker(
 			selectList.onSelect = (item) => done(items[parseInt(item.value, 10)] ?? null);
 			selectList.onCancel = () => done(null);
 
-			const pad = (content: string, width: number) =>
-				theme.fg("border", "│") + truncateToWidth(content, width - 2, "…", true) + theme.fg("border", "│");
+			const pad = (content: string, width: number) => padLine(content, width, theme);
 
 			return {
 				render(width: number): string[] {
 					const innerW = Math.max(1, width - 2);
 					const lines: string[] = [];
 
-					const title = " Copy ";
-					const tw = visibleWidth(title);
-					const lp = Math.floor((innerW - tw) / 2);
-					const rp = Math.max(0, innerW - tw - lp);
-					lines.push(
-						theme.fg("border", "╭" + "─".repeat(lp)) +
-						theme.fg("accent", theme.bold(title)) +
-						theme.fg("border", "─".repeat(rp) + "╮"),
-					);
+					lines.push(borderTop(" Copy ", innerW, theme));
 
 					for (const ll of selectList.render(innerW)) lines.push(pad(ll, width));
 
-					lines.push(theme.fg("border", "├" + "─".repeat(innerW) + "┤"));
+					lines.push(borderMid(innerW, theme));
 					lines.push(pad(
 						` ${theme.fg("dim", "up/down navigate · enter select · esc cancel")}`,
 						width,
 					));
-					lines.push(theme.fg("border", "╰" + "─".repeat(innerW) + "╯"));
+					lines.push(borderBot(innerW, theme));
 
 					return lines;
 				},
@@ -459,45 +465,31 @@ async function openPicker(ctx: ExtensionCommandContext): Promise<void> {
 	const tables = extractParsedTables(text);
 	const items = buildPickerItems(text, tables);
 
-	// Plain text with no structure — just copy it
 	if (items.length === 1) {
-		try {
-			await copyToClipboard(text);
-			ctx.ui.notify(`Copied (${text.split("\n").length} lines)`, "info");
-		} catch { ctx.ui.notify("Failed to copy", "error"); }
+		await doCopy(text, "response", ctx);
 		return;
 	}
 
 	const selected = await showPicker(items, ctx);
 	if (!selected) return;
 
-	// Table — open grid dialog
 	if (selected.action === "table" && selected.tableIndex !== undefined) {
 		await openTableGrid(tables[selected.tableIndex], ctx);
 		return;
 	}
 
-	// Everything else — copy directly
-	try {
-		await copyToClipboard(selected.content);
-		const lines = selected.content.split("\n").length;
-		ctx.ui.notify(`Copied (${lines} line${lines === 1 ? "" : "s"}, ${selected.content.length} chars)`, "info");
-	} catch { ctx.ui.notify("Failed to copy", "error"); }
+	await doCopy(selected.content, selected.label.toLowerCase(), ctx);
 }
 
 async function copyAll(ctx: ExtensionCommandContext): Promise<void> {
 	const text = getAllConversationText(ctx.sessionManager.getBranch());
 	if (!text.trim()) { ctx.ui.notify("No conversation to copy", "warning"); return; }
-	try {
-		await copyToClipboard(text);
-		ctx.ui.notify(`Copied full conversation (${text.split("\n").length} lines)`, "info");
-	} catch { ctx.ui.notify("Failed to copy", "error"); }
+	await doCopy(text, "full conversation", ctx);
 }
 
 // ── Main Extension ───────────────────────────────────────────────────────────
 
 const SETTINGS_NAME = "pi-copy-output";
-
 const DEFAULT_SHORTCUT = "ctrl+shift+c";
 
 const SHORTCUT_OPTIONS = [
@@ -510,7 +502,6 @@ const SHORTCUT_OPTIONS = [
 ];
 
 export default function copyOutputExtension(pi: ExtensionAPI) {
-	// Register settings
 	pi.events.emit("pi-extension-settings:register", {
 		name: SETTINGS_NAME,
 		settings: [
@@ -524,7 +515,6 @@ export default function copyOutputExtension(pi: ExtensionAPI) {
 		] satisfies SettingDefinition[],
 	});
 
-	// Read configured shortcut
 	const shortcut = (getSetting(SETTINGS_NAME, "shortcut", DEFAULT_SHORTCUT) ?? DEFAULT_SHORTCUT) as KeyId;
 
 	pi.registerCommand("copy", {
