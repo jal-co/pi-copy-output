@@ -25,17 +25,17 @@ pi -e npm:pi-copy-output
 
 ## Usage
 
-All commands are accessed via `/copy`:
+All commands are accessed via `/copyout`:
 
 | Command | Description |
 |---------|-------------|
-| `/copy` | Smart picker — lists all copyable blocks from the last response |
-| `/copy all` | Copy the full conversation |
-| `Ctrl+Shift+C` | Same as `/copy` (configurable) |
+| `/copyout` | Smart picker — lists all copyable blocks from the last response |
+| `/copyout all` | Copy the full conversation |
+| `Ctrl+Shift+C` | Same as `/copyout` (configurable) |
 
 ### How it works
 
-`/copy` opens a picker listing:
+`/copyout` opens a picker listing:
 - **Full response** — the raw markdown
 - **Sections** — if the response has `---` horizontal rules, each section is pickable
 - **Code blocks** — each fenced block, without the fences

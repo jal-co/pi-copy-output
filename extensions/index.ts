@@ -1,16 +1,16 @@
 /**
  * pi-copy-output — Copy assistant output to clipboard
  *
- * /copy opens a picker with the last response's copyable content.
+ * /copyout opens a picker with the last response's copyable content.
  * Code blocks copy directly. Tables open a grid where you arrow
  * through cells and press a key to copy cell, row, column, or all.
  *
  * Commands:
- *   /copy              - Smart picker
- *   /copy all          - Copy full conversation (no picker)
+ *   /copyout            - Smart picker
+ *   /copyout all        - Copy full conversation (no picker)
  *
  * Shortcut:
- *   ctrl+shift+c       - Same as /copy (configurable via /extension-settings)
+ *   ctrl+shift+c       - Same as /copyout (configurable via /extension-settings)
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
@@ -517,7 +517,7 @@ export default function copyOutputExtension(pi: ExtensionAPI) {
 
 	const shortcut = (getSetting(SETTINGS_NAME, "shortcut", DEFAULT_SHORTCUT) ?? DEFAULT_SHORTCUT) as KeyId;
 
-	pi.registerCommand("copy", {
+	pi.registerCommand("copyout", {
 		description: "Copy assistant output to clipboard",
 		getArgumentCompletions: (prefix) => {
 			const subs = [{ value: "all", label: "all", description: "Copy full conversation" }];
@@ -529,7 +529,7 @@ export default function copyOutputExtension(pi: ExtensionAPI) {
 			switch (args.trim()) {
 				case "all": await copyAll(ctx); break;
 				case "": await openPicker(ctx); break;
-				default: ctx.ui.notify(`Unknown: "${args.trim()}". Try /copy or /copy all`, "warning");
+				default: ctx.ui.notify(`Unknown: "${args.trim()}". Try /copyout or /copyout all`, "warning");
 			}
 		},
 	});

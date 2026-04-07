@@ -1,7 +1,7 @@
 {
   "name": "pi-copy-output",
-  "version": "0.2.0",
-  "description": "Copy the last assistant response to clipboard — tables, code, markdown, all of it",
+  "version": "0.3.0",
+  "description": "Copy the last assistant response to clipboard \u2014 tables, code, markdown, all of it",
   "keywords": [
     "pi-package",
     "clipboard",
